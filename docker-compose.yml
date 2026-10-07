@@ -1,0 +1,118 @@
+services:
+  # ============================================================
+  # MinIO - S3-compatible object storage
+  # ============================================================
+  minio:
+    build:
+      context: ./minio
+      dockerfile: Dockerfile
+    image: lakehouse/minio:RELEASE.2025-10-15T17-29-55Z
+    container_name: lakehouse-minio
+    restart: unless-stopped
+
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+
+    volumes:
+      - ./data:/data
+    networks:
+      default:
+        aliases:
+          - warehouse.minio
+
+  # ============================================================
+  # Iceberg REST Catalog
+  # ============================================================
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.9.1
+    container_name: lakehouse-iceberg-rest
+    restart: unless-stopped
+
+    depends_on:
+      - minio
+
+    ports:
+      - "8181:8181"
+
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      AWS_REGION: us-east-1
+
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
+      CATALOG_URI: jdbc:sqlite:/tmp/iceberg_catalog.db
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    volumes:
+      - ./iceberg-catalog:/tmp
+
+  # ============================================================
+  # Spark - ETL / Iceberg writer
+  # ============================================================
+  spark:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    image: lakehouse/spark:3.5.9
+    container_name: lakehouse-spark
+
+    depends_on:
+      - minio
+      - iceberg-rest
+
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      AWS_REGION: us-east-1
+      DATABASE_URL: ${DATABASE_URL}
+
+    command: ["tail", "-f", "/dev/null"]
+
+
+  # ============================================================
+  # Trino - SQL query engine
+  # ============================================================
+  trino:
+    image: trinodb/trino:latest
+    container_name: lakehouse-trino
+    restart: unless-stopped
+
+    depends_on:
+      - minio
+      - iceberg-rest
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - ./trino/etc:/etc/trino
+      - ./trino/data:/tmp/trino
+  superset:
+    build:
+      context: ./superset
+      dockerfile: Dockerfile
+    image: lakehouse/superset
+    container_name: lakehouse-superset
+    restart: unless-stopped
+    depends_on:
+      - trino
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./superset/home:/app/superset_home
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    environment:
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    env_file:
+      - .env

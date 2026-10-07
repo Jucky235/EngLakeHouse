@@ -1,0 +1,25 @@
+# --- Secrets & Environment ---
+.env
+.env.local
+
+# --- Logs & Runtime ---
+*.log
+logs/
+run-*.log
+
+# --- Local Data & Object Storage ---
+data/
+minio/data/
+iceberg-catalog/
+
+# --- Service States & Volumes ---
+spark/work/
+spark/metastore_db/
+trino/data/
+superset/home/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
